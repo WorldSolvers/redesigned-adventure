@@ -1,0 +1,174 @@
+from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask_sqlalchemy import SQLAlchemy
+import random
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///worldsolvers.db'
+db = SQLAlchemy(app)
+
+# Modelo de datos
+class Team(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    players = db.relationship('Player', backref='team', lazy=True)
+    score = db.Column(db.Integer, default=0)
+    challenges_solved = db.relationship('Solution', backref='team', lazy=True)
+    coins = db.relationship('Coin', backref='team', lazy=True)
+    rewards = db.relationship('TeamReward', backref='team', lazy=True)
+
+class Player(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
+
+class Challenge(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    description = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(100), nullable=False)
+
+class Solution(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    challenge_id = db.Column(db.Integer, db.ForeignKey('challenge.id'), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
+    solution_text = db.Column(db.Text, nullable=False)
+    score = db.Column(db.Integer, default=0)
+
+class Reward(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    points_required = db.Column(db.Integer, nullable=False)
+
+class TeamReward(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
+    reward_id = db.Column(db.Integer, db.ForeignKey('reward.id'), nullable=False)
+
+class Coin(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
+    amount = db.Column(db.Integer, default=0)
+
+# Otras funciones del juego
+categories = ["Cambio climático", "Pobreza", "Educación", "Salud"]
+challenges = {
+    "Cambio climático": ["Descripción del desafío 1", "Descripción del desafío 2", "Descripción del desafío 3"],
+    "Pobreza": ["Descripción del desafío 4", "Descripción del desafío 5", "Descripción del desafío 6"],
+    "Educación": ["Descripción del desafío 7", "Descripción del desafío 8", "Descripción del desafío 9"],
+    "Salud": ["Descripción del desafío 10", "Descripción del desafío 11", "Descripción del desafío 12"]
+}
+
+def select_challenge(team_name):
+    category = random.choice(categories)
+    challenge = random.choice(challenges[category])
+    return category, challenge
+
+def evaluate_solution(challenge_description, solution):
+    # Implementa aquí la lógica para evaluar la solución y asignar una puntuación.
+    # Por ahora, simplemente asignaremos una puntuación aleatoria para demostrar.
+    score = random.randint(50, 100)
+    return score
+
+def get_team_ranking():
+    teams = Team.query.order_by(Team.score.desc()).all()
+    return teams
+
+# Rutas para manejar la interfaz de usuario
+@app.route('/')
+def index():
+    if 'team_name' in session:
+        team_name = session['team_name']
+        team = Team.query.filter_by(name=team_name).first()
+        challenges = Challenge.query.all()
+        return render_template('index.html', team=team, categories=categories, challenges=challenges)
+    else:
+        teams = Team.query.all()
+        return render_template('index.html', teams=teams)
+
+@app.route('/create_team', methods=['POST'])
+def create_team():
+    team_name = request.form['team_name']
+    team = Team.query.filter_by(name=team_name).first()
+    if team:
+        flash('El nombre de equipo ya está en uso.', 'error')
+    else:
+        new_team = Team(name=team_name)
+        db.session.add(new_team)
+        db.session.commit()
+        session['team_name'] = team_name
+        flash(f"El equipo '{team_name}' ha sido creado.", 'success')
+    return redirect(url_for('index'))
+
+@app.route('/join_team', methods=['POST'])
+def join_team():
+    team_name = request.form['team_name']
+    player_name = request.form['player_name']
+    team = Team.query.filter_by(name=team_name).first()
+    if not team:
+        flash('El equipo no existe.', 'error')
+    else:
+        new_player = Player(name=player_name, team_id=team.id)
+        db.session.add(new_player)
+        db.session.commit()
+        session['team_name'] = team_name
+        flash(f"{player_name} se ha unido al equipo {team_name}.", 'success')
+    return redirect(url_for('index'))
+
+@app.route('/select_challenge', methods=['POST'])
+def select_challenge_route():
+    team_name = session['team_name']
+    team = Team.query.filter_by(name=team_name).first()
+    if not team:
+        flash('El equipo no existe.', 'error')
+    else:
+        challenge_id = int(request.form['challenge_id'])
+        challenge = Challenge.query.get(challenge_id)
+        if not challenge:
+            flash('El desafío no existe.', 'error')
+        else:
+            new_solution = Solution(challenge_id=challenge_id, team_id=team.id, solution_text="")
+            db.session.add(new_solution)
+            db.session.commit()
+            flash(f"El equipo {team_name} ha seleccionado el desafío: {challenge.description}", 'success')
+    return redirect(url_for('index'))
+
+@app.route('/resolve_challenge', methods=['POST'])
+def resolve_challenge():
+    team_name = session['team_name']
+    team = Team.query.filter_by(name=team_name).first()
+    if not team:
+        flash('El equipo no existe.', 'error')
+    else:
+        challenge_id = int(request.form['challenge_id'])
+        challenge = Challenge.query.get(challenge_id)
+        if not challenge:
+            flash('El desafío no existe.', 'error')
+        else:
+            solution_text = request.form['solution']
+            solution = Solution.query.filter_by(challenge_id=challenge_id, team_id=team.id).first()
+            solution.solution_text = solution_text
+            solution.score = evaluate_solution(challenge.description, solution_text)
+            team.score += solution.score
+            db.session.commit()
+            flash('Desafío resuelto y evaluado.', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/team_ranking')
+def team_ranking():
+    teams = get_team_ranking()
+    return render_template('ranking.html', teams=teams)
+
+@app.route('/team_profile')
+def team_profile():
+    team_name = session['team_name']
+    team = Team.query.filter_by(name=team_name).first()
+    if not team:
+        flash('El equipo no existe.', 'error')
+        return redirect(url_for('index'))
+    else:
+        return render_template('team_profile.html', team=team)
+
+if __name__ == '__main__':
+    db.create_all()
+    app.run(debug=True)
